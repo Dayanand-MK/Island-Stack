@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -444,6 +444,7 @@ canvas#game{position:absolute; inset:0; width:100%; height:100%; display:block; 
 
   <!-- Persistent backdrop for the live game canvas. -->
   <video class="game-bg-video" autoplay loop muted playsinline preload="auto" aria-hidden="true">
+    <source src="./assets/bg.webm" type="video/webm">
     <source src="./assets/bg.mp4" type="video/mp4">
   </video>
 
@@ -451,7 +452,7 @@ canvas#game{position:absolute; inset:0; width:100%; height:100%; display:block; 
 
   <!-- ============ START SCREEN ============ -->
   <div id="screen-start" class="screen">
-    <video class="bg-video" autoplay loop muted playsinline src="./assets/bg.mp4"></video>
+    <video class="bg-video" autoplay loop muted playsinline src="./assets/bg.webm"></video>
     <div class="bg-scrim"></div>
     <div class="start-content">
       <h1 class="game-title"><span class="t-line1">ZEPHY &amp; ZARA</span><span class="t-line2">ISLAND STACK</span></h1>
@@ -479,7 +480,7 @@ canvas#game{position:absolute; inset:0; width:100%; height:100%; display:block; 
 
   <!-- ============ CHARACTER SELECT ============ -->
   <div id="screen-select" class="screen hidden">
-    <video class="bg-video" autoplay loop muted playsinline src="./assets/bg.mp4"></video>
+    <video class="bg-video" autoplay loop muted playsinline src="./assets/bg.webm"></video>
     <div class="select-bg"></div>
     <h2 class="section-title">Select Your Character</h2>
     <div class="char-row">
@@ -568,7 +569,7 @@ canvas#game{position:absolute; inset:0; width:100%; height:100%; display:block; 
 
   <!-- ============ LEADERBOARD ============ -->
   <div id="screen-leaderboard" class="screen overlay hidden">
-    <video class="bg-video" autoplay loop muted playsinline src="./assets/bg.mp4"></video>
+    <video class="bg-video" autoplay loop muted playsinline src="./assets/bg.webm"></video>
     <div class="bg-scrim lb-scrim"></div>
     <div class="panel panel-wide">
       <h2 class="section-title">Leaderboard</h2>
