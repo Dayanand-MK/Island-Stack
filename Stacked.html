@@ -752,35 +752,35 @@ const landingBanner = $('landing-banner');
 function makeImg(src){ const i = new Image(); i.src = src; return i; }
 
 const CHEST_SPRITES = [
-  { sx: 4, sy: 15, sw: 201, sh: 152 },
-  { sx: 209, sy: 16, sw: 201, sh: 151 },
-  { sx: 410, sy: 15, sw: 204, sh: 155 },
-  { sx: 614, sy: 10, sw: 205, sh: 160 },
-  { sx: 819, sy: 10, sw: 201, sh: 160 },
-  { sx: 8, sy: 187, sw: 197, sh: 141 },
-  { sx: 205, sy: 176, sw: 200, sh: 151 },
-  { sx: 412, sy: 183, sw: 202, sh: 147 },
-  { sx: 614, sy: 170, sw: 197, sh: 161 },
-  { sx: 819, sy: 170, sw: 204, sh: 159 }
+  { sx: 10, sy: 33, sw: 424, sh: 320 },
+  { sx: 445, sy: 34, sw: 424, sh: 320 },
+  { sx: 869, sy: 33, sw: 434, sh: 326 },
+  { sx: 1303, sy: 21, sw: 435, sh: 341 },
+  { sx: 1738, sy: 23, sw: 424, sh: 339 },
+  { sx: 17, sy: 397, sw: 417, sh: 298 },
+  { sx: 434, sy: 374, sw: 425, sh: 319 },
+  { sx: 874, sy: 389, sw: 429, sh: 311 },
+  { sx: 1303, sy: 362, sw: 416, sh: 339 },
+  { sx: 1738, sy: 362, sw: 433, sh: 334 }
 ];
 
 const LOG_SPRITES = [
-  { sx: 17, sy: 5, sw: 224, sh: 80 },
-  { sx: 263, sy: 2, sw: 238, sh: 83 },
-  { sx: 526, sy: 3, sw: 229, sh: 82 },
-  { sx: 782, sy: 0, sw: 236, sh: 85 },
-  { sx: 10, sy: 85, sw: 235, sh: 81 },
-  { sx: 270, sy: 85, sw: 226, sh: 85 },
-  { sx: 519, sy: 85, sw: 237, sh: 85 },
-  { sx: 779, sy: 85, sw: 232, sh: 84 },
-  { sx: 15, sy: 171, sw: 228, sh: 85 },
-  { sx: 268, sy: 170, sw: 233, sh: 86 },
-  { sx: 527, sy: 170, sw: 231, sh: 86 },
-  { sx: 781, sy: 170, sw: 235, sh: 80 },
-  { sx: 10, sy: 256, sw: 235, sh: 82 },
-  { sx: 266, sy: 256, sw: 239, sh: 84 },
-  { sx: 526, sy: 256, sw: 240, sh: 85 },
-  { sx: 780, sy: 256, sw: 237, sh: 83 }
+  { sx: 36, sy: 12, sw: 475, sh: 169 },
+  { sx: 557, sy: 0, sw: 505, sh: 181 },
+  { sx: 1116, sy: 8, sw: 486, sh: 173 },
+  { sx: 1659, sy: 0, sw: 499, sh: 181 },
+  { sx: 23, sy: 181, sw: 497, sh: 171 },
+  { sx: 573, sy: 181, sw: 479, sh: 181 },
+  { sx: 1103, sy: 181, sw: 501, sh: 181 },
+  { sx: 1653, sy: 181, sw: 492, sh: 181 },
+  { sx: 33, sy: 364, sw: 481, sh: 179 },
+  { sx: 569, sy: 362, sw: 492, sh: 181 },
+  { sx: 1117, sy: 362, sw: 489, sh: 181 },
+  { sx: 1657, sy: 362, sw: 498, sh: 168 },
+  { sx: 21, sy: 543, sw: 497, sh: 173 },
+  { sx: 566, sy: 543, sw: 506, sh: 177 },
+  { sx: 1116, sy: 543, sw: 508, sh: 181 },
+  { sx: 1656, sy: 543, sw: 500, sh: 176 }
 ];
 
 let lastChestVariant = -1;
@@ -2051,25 +2051,32 @@ function drawChestSprite(cx, cy, w, rot, scaleY, variant){
     const fallbackImg = IMG.chestPirate;
     if(fallbackImg && fallbackImg.complete && fallbackImg.naturalWidth){
       const ratio = fallbackImg.naturalHeight/fallbackImg.naturalWidth;
-      const dw = w*1.08;
+      const dw = w*0.92;
       const dh = dw*ratio*(scaleY!==undefined?scaleY:1);
       ctx.save();
       ctx.translate(cx,cy);
       if(rot) ctx.rotate(rot*Math.PI/180);
-      ctx.drawImage(fallbackImg, -dw/2, -dh/2 + w*0.06, dw, dh);
+      ctx.drawImage(fallbackImg, -dw/2, -dh/2 + w*0.04, dw, dh);
       ctx.restore();
       return;
     }
     drawTreasureBox(cx,cy,w,rot,scaleY);
     return;
   }
+  const scaleX = img.naturalWidth / 2172;
+  const scaleY_sheet = img.naturalHeight / 724;
+  const sx = sprite.sx * scaleX;
+  const sy = sprite.sy * scaleY_sheet;
+  const sw = sprite.sw * scaleX;
+  const sh = sprite.sh * scaleY_sheet;
+
   const ratio = sprite.sh/sprite.sw;
-  const dw = w*1.08;
+  const dw = w*0.92;
   const dh = dw*ratio*(scaleY!==undefined?scaleY:1);
   ctx.save();
   ctx.translate(cx,cy);
   if(rot) ctx.rotate(rot*Math.PI/180);
-  ctx.drawImage(img, sprite.sx, sprite.sy, sprite.sw, sprite.sh, -dw/2, -dh/2 + w*0.06, dw, dh);
+  ctx.drawImage(img, sx, sy, sw, sh, -dw/2, -dh/2 + w*0.04, dw, dh);
   ctx.restore();
 }
 
@@ -2081,13 +2088,20 @@ function drawLogSprite(cx, cy, w, rot, scaleY, variant){
     drawLog(cx,cy,w,rot,scaleY);
     return;
   }
+  const scaleX = img.naturalWidth / 2172;
+  const scaleY_sheet = img.naturalHeight / 724;
+  const sx = sprite.sx * scaleX;
+  const sy = sprite.sy * scaleY_sheet;
+  const sw = sprite.sw * scaleX;
+  const sh = sprite.sh * scaleY_sheet;
+
   const ratio = sprite.sh/sprite.sw;
-  const dw = w*1.08;
+  const dw = w*1.0;
   const dh = dw*ratio*(scaleY!==undefined?scaleY:1);
   ctx.save();
   ctx.translate(cx,cy);
   if(rot) ctx.rotate(rot*Math.PI/180);
-  ctx.drawImage(img, sprite.sx, sprite.sy, sprite.sw, sprite.sh, -dw/2, -dh/2 + w*0.04, dw, dh);
+  ctx.drawImage(img, sx, sy, sw, sh, -dw/2, -dh/2 + w*0.02, dw, dh);
   ctx.restore();
 }
 
