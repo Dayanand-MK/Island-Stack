@@ -1,13 +1,16 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
-const html = fs.readFileSync('Stacked.html', 'utf8');
+const html = fs.readFileSync('Stacked.html', 'utf8').replace(/\r\n/g, '\n');
 for(const match of html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)) new vm.Script(match[1]);
 
 async function leaderboardTests(){
   const cache = new Map();
-  const rows = Array.from({length:1205}, (_,i) => ({id:i+1, player_id:'p'+i, name:'Same name', score:i}));
-  rows.push({id:1206, player_id:'p0', name:'Renamed player', score:9999});
+  const rows = Array.from({length:1205}, (_,i) => ({id:i+1, player_id:'p'+i, name:'Player '+i, score:i}));
+  rows.push({id:1206, player_id:'another-device', name:'  PLAYER 0  ', score:9999});
+  rows.push({id:1207, player_id:'third-device', name:'Player 0', score:500});
+  rows.push({id:1208, player_id:null, name:'player 0', score:20});
+  rows.push({id:1209, player_id:'blank', name:'   ', score:99999});
   let offline = false;
   const ranges = [];
   const context = vm.createContext({getDeviceId:()=> 'p0', console:{warn(){}}, setCloudStatus(){},
@@ -18,13 +21,16 @@ async function leaderboardTests(){
   });
   vm.runInContext(html.slice(html.indexOf('const Store = {'), html.indexOf('/* ============================================================\n   GAME STATE'))+'\nglobalThis.store = Store;',context);
   let result = await context.store.getLeaderboard();
-  assert.equal(result.length,1205, 'all players, including identical names, must appear');
+  assert.equal(result.length,1205, 'show every unique username, with no duplicates');
   assert.equal(result[0].score,9999);
-  assert.equal(result[0].name,'Renamed player');
+  assert.equal(result[0].name,'  PLAYER 0  ');
+  assert.equal(result.filter(e=>e.name.trim().toLowerCase()==='player 0').length,1,
+    'same-name runs across devices, casing, whitespace, and legacy rows must share one best score');
   assert.equal(ranges.length,4, 'fetch until empty, including beyond 1000 rows');
   offline=true;
   result=await context.store.getLeaderboard();
   assert.equal(result.length,1205);
+  assert.equal(result[0].score,9999, 'cached scores must also show only the highest score per name');
   assert.equal(context.store.leaderboardOnline,false);
   offline=false; rows.length=0;
   result=await context.store.getLeaderboard();
@@ -56,4 +62,4 @@ function loopTests(){
   assert.ok(!html.includes('setTimeout(()=>triggerGameOver()'),'game-over must use simulation time');
 }
 
-(async()=>{await leaderboardTests();loopTests();console.log('PASS: script syntax, leaderboard pagination/identity/cache, single animation loop, pause/resume timing');})().catch(e=>{console.error(e);process.exitCode=1});
+(async()=>{await leaderboardTests();loopTests();console.log('PASS: script syntax, leaderboard pagination/unique usernames/cache, single animation loop, pause/resume timing');})().catch(e=>{console.error(e);process.exitCode=1});
