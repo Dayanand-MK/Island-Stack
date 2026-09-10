@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -107,6 +107,9 @@ canvas#game{position:absolute; inset:0; width:100%; height:100%; display:block; 
   background:linear-gradient(180deg, rgba(6,20,26,0.15) 0%, rgba(6,20,26,0.25) 45%, rgba(6,20,26,0.72) 78%, rgba(6,20,26,0.88) 100%);}
 .lb-scrim{background:linear-gradient(180deg, rgba(6,20,26,0.55) 0%, rgba(6,20,26,0.6) 50%, rgba(6,20,26,0.72) 100%);}
 #screen-leaderboard{background:#0B4F63;}
+#screen-gameover{background:#0B2030;}
+.go-bg-img{position:absolute; inset:0; width:100%; height:100%; object-fit:cover; z-index:0; pointer-events:none;}
+.go-scrim{position:absolute; inset:0; background:linear-gradient(180deg, rgba(4,14,20,0.35) 0%, rgba(4,14,20,0.45) 40%, rgba(4,14,20,0.72) 80%, rgba(4,14,20,0.88) 100%); z-index:1; pointer-events:none;}
 
 .start-content{position:relative; z-index:5; display:flex; flex-direction:column; align-items:center; gap:22px; padding:20px; text-align:center;}
 .game-title{margin:0; font-family:'Pirata One', 'Baloo 2', sans-serif; color:#fff;
@@ -540,7 +543,9 @@ canvas#game{position:absolute; inset:0; width:100%; height:100%; display:block; 
 
   <!-- ============ GAME OVER ============ -->
   <div id="screen-gameover" class="screen overlay hidden">
-    <div class="panel-wrap">
+    <img class="go-bg-img" src="./assets/gameover-bg.jpg" alt="" aria-hidden="true">
+    <div class="go-scrim"></div>
+    <div class="panel-wrap" style="position:relative;z-index:2;">
       <div id="new-highscore" class="new-high-parchment hidden">
         <span class="new-high-text">NEW HIGH<br>SCORE!</span>
       </div>
