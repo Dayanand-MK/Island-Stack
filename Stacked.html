@@ -1074,11 +1074,12 @@ const Store = {
     try{ if(window.storage && window.storage.set) await window.storage.set('player_profile', JSON.stringify(p), false); }catch(e){}
     updateHomePlayerBadge();
 
-    if(supabaseClient && p.name && p.name !== 'Guest'){
+    if(supabaseClient){
       const deviceId = getDeviceId();
+      const pName = (p.name && p.name.trim()) ? p.name.trim() : 'Guest Explorer';
       const payload = {
         id: deviceId,
-        name: p.name,
+        name: pName,
         character: p.character || 'zephy',
         best_score: p.bestScore || 0,
         best_perfect: p.bestPerfect || 0,
@@ -1088,18 +1089,23 @@ const Store = {
       };
       try {
         const { error } = await supabaseClient.from('profiles').upsert(payload, { onConflict: 'id' });
-        if(error && error.code === 'PGRST205'){
-          await supabaseClient.from('players').upsert(payload, { onConflict: 'id' });
+        if(error){
+          console.warn('Supabase profile save notice:', error);
+          if(error.code === 'PGRST205'){
+            await supabaseClient.from('players').upsert(payload, { onConflict: 'id' });
+          }
+        } else {
+          setCloudStatus(true, 'Supabase Synced');
         }
-        setCloudStatus(true, 'Supabase Synced');
       } catch(e){
-        console.warn('Supabase save profile notice:', e);
+        console.warn('Supabase save profile exception:', e);
       }
     }
   },
 
   async getLeaderboard(){
     let raw = [];
+    let supabaseSuccess = false;
     if(supabaseClient){
       try {
         const { data, error } = await supabaseClient
@@ -1108,16 +1114,20 @@ const Store = {
           .order('score', { ascending: false })
           .limit(200);
         
-        if(!error && Array.isArray(data) && data.length > 0){
+        if(!error && Array.isArray(data)){
+          supabaseSuccess = true;
           setCloudStatus(true, 'Supabase Online');
           raw = data;
+        } else if(error){
+          console.warn('Supabase leaderboard fetch notice:', error);
+          setCloudStatus(false, 'DB Offline / Connecting');
         }
       } catch(e){
-        console.warn('Supabase leaderboard fetch notice:', e);
+        console.warn('Supabase leaderboard fetch error:', e);
       }
     }
 
-    if(!raw.length) {
+    if(!supabaseSuccess && !raw.length) {
       try {
         const cached = localStorage.getItem('island_stack_lb_cache') || localStorage.getItem('leaderboard_v1');
         if(cached) raw = JSON.parse(cached);
@@ -1154,19 +1164,12 @@ const Store = {
     if(entry.perfect > entry.jumps) return null;
     if(entry.combo > entry.jumps) return null;
     if(entry.jumps > 100000) return null;
-    // Relaxed score cap: score can now accumulate beyond jumps * 10
-    entry.name = (entry.name||'Guest').toString().slice(0,14).trim() || 'Guest';
+    entry.name = (entry.name||'Guest Explorer').toString().slice(0,14).trim() || 'Guest Explorer';
     const normalizedKey = entry.name.trim().toLowerCase();
     entry.ts = Date.now();
 
-    // Check existing best for this player before submitting to Supabase
-    let currentList = [];
-    try { currentList = await Store.getLeaderboard(); } catch(e){}
-    const existingEntry = currentList.find(e => (e.name||'').trim().toLowerCase() === normalizedKey);
-    const existingBest = existingEntry ? (existingEntry.score||0) : 0;
-
-    // Only submit to Supabase if this is a new high score for this player
-    if(entry.score > existingBest && supabaseClient){
+    // Always insert score into Supabase leaderboard
+    if(supabaseClient){
       try {
         const row = {
           name: entry.name,
@@ -1180,12 +1183,19 @@ const Store = {
         };
         const { error } = await supabaseClient.from('leaderboard').insert([row]);
         if(!error){
-          setCloudStatus(true, 'Score Saved to Supabase!');
+          setCloudStatus(true, 'Score Saved to Database!');
+        } else {
+          console.warn('Supabase leaderboard insert notice:', error);
         }
       } catch(e){
-        console.warn('Supabase score insert notice:', e);
+        console.warn('Supabase score insert exception:', e);
       }
     }
+
+    // Also persist profile with updated bests to Supabase
+    try {
+      await Store.saveProfile(profile);
+    } catch(e){}
 
     try {
       // Re-fetch list (already deduplicated)
@@ -1513,11 +1523,10 @@ function triggerGameOver(){
 
 async function submitCurrentScore(){
   if(jumpCount<1) return;
-  if(!profile.name){
-    return; // will prompt via UI flow (Retry/leaderboard triggers name screen once)
-  }
+  const pName = (profile.name && profile.name.trim()) ? profile.name.trim() : 'Guest Explorer';
+  profile.name = pName;
   await Store.submitScore({
-    name: profile.name, character: selectedChar,
+    name: pName, character: selectedChar,
     score: score, perfect: perfectCount, jumps: jumpCount, combo: bestCombo
   });
 }
@@ -2285,12 +2294,15 @@ async function renderLeaderboard(){
     return;
   }
   const myNorm = (profile.name||'').trim().toLowerCase();
-  list.slice(0,10).forEach((entry, i)=>{
+  list.slice(0,50).forEach((entry, i)=>{
     const entryNorm = (entry.name||'').trim().toLowerCase();
     const row = document.createElement('div');
-    row.className='lb-row'+(myNorm && entryNorm===myNorm?' me':'');
-    row.innerHTML = `<span class="lb-rank">${i+1}</span>
-      <span class="lb-player">${escapeHtml(entry.name)}</span>
+    const isMe = myNorm && entryNorm === myNorm;
+    row.className = 'lb-row' + (isMe ? ' me' : '');
+    const charIcon = entry.character === 'zara' ? '🌺' : '🏴‍☠️';
+    const rankDisplay = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i + 1);
+    row.innerHTML = `<span class="lb-rank">${rankDisplay}</span>
+      <span class="lb-player" title="${escapeHtml(entry.name)}">${charIcon} ${escapeHtml(entry.name)}</span>
       <span class="lb-num">${entry.score||0}</span>`;
     el.appendChild(row);
   });
@@ -2393,10 +2405,13 @@ function wireUI(){
       showScreen('gameover');
     }
   });
-  $('btn-name-skip').addEventListener('click', ()=>{
+  $('btn-name-skip').addEventListener('click', async ()=>{
     if(nameReturnTo === 'start'){
       showScreen('start');
     } else {
+      if(!profile.name) profile.name = 'Guest Explorer';
+      await Store.saveProfile(profile);
+      await submitCurrentScore();
       showScreen('gameover');
     }
   });

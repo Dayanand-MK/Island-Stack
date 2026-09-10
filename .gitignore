@@ -8,3 +8,5 @@ $RECYCLE.BIN/
 # Editor directories
 .vscode/
 .idea/
+
+.vercel

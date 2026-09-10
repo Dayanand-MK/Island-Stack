@@ -61,6 +61,20 @@ CREATE TRIGGER set_profiles_updated_at
     EXECUTE FUNCTION public.handle_updated_at();
 
 -- ============================================================
+-- TABLE PRIVILEGES (MANDATORY FOR SUPABASE ANON ACCESS)
+-- PostgREST runs as the 'anon' role when unauthenticated.
+-- Table-level privileges MUST be granted before RLS is evaluated.
+-- ============================================================
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON TABLE public.profiles TO anon, authenticated, service_role;
+GRANT ALL ON TABLE public.leaderboard TO anon, authenticated, service_role;
+GRANT ALL ON TABLE public.players TO anon, authenticated, service_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
+
+-- ============================================================
 -- ROW LEVEL SECURITY (RLS) POLICIES
 -- Since the frontend uses the public/anon key without auth login,
 -- public access policies must be granted so the game can read/write data.
@@ -124,3 +138,4 @@ BEGIN
         ALTER PUBLICATION supabase_realtime ADD TABLE public.profiles;
     END IF;
 END $$;
+
