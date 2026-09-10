@@ -978,13 +978,16 @@ try {
   console.warn('Supabase initialization notice:', e);
 }
 
+let sessionDeviceId = null;
 function getDeviceId(){
+  if(sessionDeviceId) return sessionDeviceId;
   let id = null;
   try { id = localStorage.getItem('island_stack_device_id'); }catch(e){}
   if(!id){
     id = 'player_' + Math.random().toString(36).substring(2, 11) + '_' + Date.now().toString(36);
     try { localStorage.setItem('island_stack_device_id', id); }catch(e){}
   }
+  sessionDeviceId = id;
   return id;
 }
 
@@ -1012,6 +1015,39 @@ function setCloudStatus(online, text){
 const Store = {
   getDeviceId,
   usernameKey(name){ return String(name || '').trim().toLowerCase(); },
+  pendingRows: null,
+  scoreSync: null,
+  getPendingScores(){
+    if(Store.pendingRows === null){
+      try { Store.pendingRows = JSON.parse(localStorage.getItem('island_stack_pending_scores') || '[]'); }catch(e){}
+      if(!Array.isArray(Store.pendingRows)) Store.pendingRows = [];
+    }
+    return Store.pendingRows;
+  },
+  persistPendingScores(){
+    try { localStorage.setItem('island_stack_pending_scores', JSON.stringify(Store.getPendingScores())); }catch(e){}
+  },
+  flushScores(){
+    if(Store.scoreSync) return Store.scoreSync;
+    Store.scoreSync = (async () => {
+      if(!supabaseClient) return;
+      while(Store.getPendingScores().length){
+        const row = Store.getPendingScores()[0];
+        try {
+          const { error } = await supabaseClient.from('leaderboard').insert([row]);
+          if(error) throw error;
+          Store.getPendingScores().shift();
+          Store.persistPendingScores();
+          setCloudStatus(true, 'Score Saved to Database!');
+        } catch(e){
+          console.warn('Score upload will retry:', e);
+          setCloudStatus(false, 'Score pending — will retry when connected');
+          return;
+        }
+      }
+    })().finally(() => { Store.scoreSync = null; });
+    return Store.scoreSync;
+  },
 
   async getProfile(){
     let localProf = { name:'', character:'zephy', bestPerfect:0, bestJumps:0, bestCombo:0, bestScore:0, sound:true };
@@ -1029,6 +1065,8 @@ const Store = {
   async syncProfileFromSupabase(){
     if(!supabaseClient) return null;
     const deviceId = getDeviceId();
+    const originalName = profile.name;
+    const originalCharacter = profile.character;
     try {
       // 1. Try querying 'profiles' table
       let { data, error } = await supabaseClient
@@ -1064,8 +1102,8 @@ const Store = {
       if(data && (data.name || data.username)){
         const remoteName = (data.name || data.username || '').toString().trim();
         if(remoteName){
-          profile.name = remoteName;
-          if(data.character && ['zephy','zara'].includes(data.character)) profile.character = data.character;
+          if(profile.name === originalName) profile.name = remoteName;
+          if(profile.character === originalCharacter && data.character && ['zephy','zara'].includes(data.character)) profile.character = data.character;
           if(data.best_score) profile.bestScore = Math.max(profile.bestScore, Number(data.best_score)||0);
           if(data.best_perfect) profile.bestPerfect = Math.max(profile.bestPerfect, Number(data.best_perfect)||0);
           if(data.best_jumps) profile.bestJumps = Math.max(profile.bestJumps, Number(data.best_jumps)||0);
@@ -1085,11 +1123,12 @@ const Store = {
   },
 
   async saveProfile(p){
+    p = { ...p };
     try{ localStorage.setItem('island_stack_profile', JSON.stringify(p)); }catch(e){}
     try{ if(window.storage && window.storage.set) await window.storage.set('player_profile', JSON.stringify(p), false); }catch(e){}
     updateHomePlayerBadge();
 
-    if(supabaseClient){
+    if(supabaseClient && p.name && p.name.trim()){
       const deviceId = getDeviceId();
       const pName = (p.name && p.name.trim()) ? p.name.trim() : 'Guest Explorer';
       const payload = {
@@ -1121,6 +1160,7 @@ const Store = {
   leaderboardOnline: false,
   async getLeaderboard(){
     let raw = [];
+    const pendingSnapshot = [...Store.getPendingScores()];
     Store.leaderboardOnline = false;
     if(supabaseClient){
       try {
@@ -1154,6 +1194,13 @@ const Store = {
     const seen = new Map();
     for(const entry of raw){
       // Show one best score per username, including runs from other devices.
+      if(!entry || !Number.isFinite(Number(entry.score)) || Number(entry.score) < 0) continue;
+      const key = Store.usernameKey(entry.name);
+      if(!key) continue;
+      const existing = seen.get(key);
+      if(!existing || Number(entry.score) > Number(existing.score)) seen.set(key, entry);
+    }
+    for(const entry of [...pendingSnapshot, ...Store.getPendingScores()]){
       const key = Store.usernameKey(entry.name);
       if(!key) continue;
       const existing = seen.get(key);
@@ -1165,39 +1212,30 @@ const Store = {
   async submitScore(entry){
     if(!entry) return null;
     if(!['zephy','zara'].includes(entry.character)) return null;
+    if(!['score','perfect','jumps','combo'].every(key => Number.isSafeInteger(entry[key]))) return null;
     if(entry.perfect < 0 || entry.jumps < 0 || entry.combo < 0 || entry.score < 0) return null;
     if(entry.perfect > entry.jumps) return null;
     if(entry.combo > entry.jumps) return null;
     if(entry.jumps > 100000) return null;
-    entry.name = (entry.name||'Guest Explorer').toString().slice(0,14).trim() || 'Guest Explorer';
+    entry = { ...entry };
+    entry.name = (entry.name||'Guest Explorer').toString().trim() || 'Guest Explorer';
     entry.player_id = getDeviceId();
     entry.ts = Date.now();
 
-    // Always insert score into Supabase leaderboard
-    if(supabaseClient){
-      try {
-        const row = {
-          name: entry.name,
-          character: entry.character,
-          score: entry.score,
-          perfect: entry.perfect,
-          combo: entry.combo,
-          jumps: entry.jumps,
-          player_id: getDeviceId(),
-          created_at: new Date().toISOString()
-        };
-        const { error } = await supabaseClient.from('leaderboard').insert([row]);
-        if(!error){
-          setCloudStatus(true, 'Score Saved to Database!');
-        } else {
-          console.warn('Supabase leaderboard insert notice:', error);
-          setCloudStatus(false, 'Score saved on this device only');
-        }
-      } catch(e){
-        console.warn('Supabase score insert exception:', e);
-        setCloudStatus(false, 'Score saved on this device only');
-      }
-    }
+    // Persist before starting the network request so a refresh cannot lose the run.
+    const row = {
+      name: entry.name,
+      character: entry.character,
+      score: entry.score,
+      perfect: entry.perfect,
+      combo: entry.combo,
+      jumps: entry.jumps,
+      player_id: entry.player_id,
+      created_at: new Date().toISOString()
+    };
+    Store.getPendingScores().push(row);
+    Store.persistPendingScores();
+    await Store.flushScores();
 
     // Also persist profile with updated bests to Supabase
     try {
@@ -1205,7 +1243,7 @@ const Store = {
     } catch(e){}
 
     try {
-      // Re-fetch list (already deduplicated)
+      // Keep a local copy for offline leaderboard access.
       let list = [];
       try { list = JSON.parse(localStorage.getItem('island_stack_lb_cache') || '[]'); }catch(e){}
       if(!Array.isArray(list)) list = [];
@@ -1289,7 +1327,7 @@ async function getGlobalBestScore(){
       .select('score').order('score', { ascending:false }).limit(1);
     if(error) return globalBestScore;
     return Number(data?.[0]?.score) || 0;
-  } catch(e){ return 0; }
+  } catch(e){ return globalBestScore; }
 }
 let globalBestScore = 0;
 async function refreshGlobalBest(){
@@ -1327,6 +1365,7 @@ window.addEventListener('resize', ()=>{ resize(); if(!running) render(); });
    GAME SETUP
 ============================================================ */
 function resetGame(){
+  runSubmitted = false;
   gameOverRemaining = null;
   perfectCount=0; jumpCount=0; combo=0; bestCombo=0;
   score=0; runTierScore=0;
@@ -1542,8 +1581,10 @@ function triggerGameOver(){
 }
 
 let pendingScoreSave = Promise.resolve();
+let runSubmitted = false;
 async function submitCurrentScore(){
-  if(jumpCount<1) return;
+  if(jumpCount<1 || runSubmitted) return;
+  runSubmitted = true;
   const pName = (profile.name && profile.name.trim()) ? profile.name.trim() : 'Guest Explorer';
   profile.name = pName;
   pendingScoreSave = Store.submitScore({
@@ -2339,12 +2380,17 @@ document.addEventListener('visibilitychange', () => {
 /* ============================================================
    LEADERBOARD UI
 ============================================================ */
+let leaderboardRequest = 0;
 async function renderLeaderboard(){
+  const request = ++leaderboardRequest;
   const el = $('lb-list');
   el.textContent = 'Loading scores…';
-  await pendingScoreSave;
+  Store.flushScores();
   const list = await Store.getLeaderboard();
+  if(request !== leaderboardRequest || state !== 'leaderboard') return;
   el.innerHTML = Store.leaderboardOnline ? '' : '<div class="lb-empty">Offline — showing cached scores. Reopen to retry.</div>';
+  if(Store.getPendingScores().length) el.innerHTML += '<div class="lb-empty">Some scores are saved on this device and awaiting upload.</div>';
+  globalBestScore = list.reduce((best, entry) => Math.max(best, Number(entry.score)||0), 0);
   if(!list.length){
     if(Store.leaderboardOnline) el.innerHTML = '<div class="lb-empty">No scores yet. Be the first!</div>';
     return;
@@ -2515,8 +2561,14 @@ async function init(){
   showScreen('start');
   // Asynchronously query Supabase to fetch remote profile/name
   Store.syncProfileFromSupabase().then(() => updateHomePlayerBadge());
+  Store.flushScores();
   refreshGlobalBest();
 }
+window.addEventListener('online', () => {
+  Store.flushScores().then(() => {
+    if(state === 'leaderboard') renderLeaderboard();
+  });
+});
 function imgLoaded(img){
   return new Promise(res=>{
     if(img.complete && img.naturalWidth) return res();

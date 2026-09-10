@@ -62,4 +62,62 @@ function loopTests(){
   assert.ok(!html.includes('setTimeout(()=>triggerGameOver()'),'game-over must use simulation time');
 }
 
-(async()=>{await leaderboardTests();loopTests();console.log('PASS: script syntax, leaderboard pagination/unique usernames/cache, single animation loop, pause/resume timing');})().catch(e=>{console.error(e);process.exitCode=1});
+async function scoreRecoveryTests(){
+  const cache = new Map();
+  const uploads = [];
+  let failUpload = true;
+  const context = vm.createContext({getDeviceId:()=> 'device', console:{warn(){}},setCloudStatus(){},
+    profile:{},globalBestScore:0,window:{},
+    localStorage:{getItem:k=>cache.get(k),setItem:(k,v)=>cache.set(k,v)},
+    supabaseClient:{from:()=>({select(){return this},order(){return this},async range(){return {data:[]}},
+      async insert(rows){if(failUpload) return {error:Error('offline')};uploads.push(...rows);return {error:null}}
+    })}
+  });
+  vm.runInContext(html.slice(html.indexOf('const Store = {'),html.indexOf('/* ============================================================\n   GAME STATE'))+'\nglobalThis.store = Store;',context);
+  context.store.saveProfile=async()=>{};
+  const entry={name:'Full Player Username',character:'zephy',score:25,perfect:2,jumps:3,combo:2};
+  await context.store.submitScore(entry);
+  assert.equal(JSON.parse(cache.get('island_stack_pending_scores')).length,1,'persist failed uploads');
+  context.store.pendingRows=null; // Simulate reloading pending scores after a refresh.
+  let list=await context.store.getLeaderboard();
+  assert.equal(list[0].score,25,'an empty cloud response must not erase a pending score');
+  assert.equal(list[0].name,entry.name,'preserve the complete username');
+  failUpload=false;
+  await Promise.all([context.store.flushScores(),context.store.flushScores()]);
+  assert.equal(uploads.length,1,'concurrent retries share one upload queue');
+  assert.equal(context.store.getPendingScores().length,0);
+  assert.equal(cache.get('island_stack_pending_scores'),'[]');
+  await context.store.submitScore({...entry,score:NaN});
+  assert.equal(uploads.length,1,'reject invalid numeric scores');
+  const deviceContext=vm.createContext({localStorage:{getItem(){throw Error('blocked')},setItem(){throw Error('blocked')}}});
+  vm.runInContext(html.slice(html.indexOf('let sessionDeviceId ='),html.indexOf('function updateHomePlayerBadge()'))+'\nglobalThis.deviceId=getDeviceId;',deviceContext);
+  assert.equal(deviceContext.deviceId(),deviceContext.deviceId(),'identity remains stable when storage is unavailable');
+}
+
+async function profileAndSubmissionTests(){
+  let resolveProfile;
+  const currentProfile={name:'Old name',character:'zephy',bestScore:0,bestPerfect:0,bestJumps:0,bestCombo:0};
+  const context=vm.createContext({profile:currentProfile,getDeviceId:()=> 'device',setCloudStatus(){},updateHomePlayerBadge(){},
+    localStorage:{setItem(){}},console:{warn(){}},
+    supabaseClient:{from:()=>({select(){return this},eq(){return this},maybeSingle(){return new Promise(resolve=>{resolveProfile=resolve})}})}
+  });
+  vm.runInContext(html.slice(html.indexOf('const Store = {'),html.indexOf('/* ============================================================\n   GAME STATE'))+'\nglobalThis.store = Store;',context);
+  const syncing=context.store.syncProfileFromSupabase();
+  currentProfile.name='New name';currentProfile.character='zara';
+  resolveProfile({data:{name:'Old name',character:'zephy',best_score:50},error:null});
+  await syncing;
+  assert.equal(currentProfile.name,'New name','late cloud response must not overwrite a name edit');
+  assert.equal(currentProfile.character,'zara');
+  assert.equal(currentProfile.bestScore,50,'merge remote best stats despite a concurrent name edit');
+  let submissions=0;
+  const runContext=vm.createContext({jumpCount:2,score:10,perfectCount:1,bestCombo:1,selectedChar:'zephy',
+    profile:{name:'Player'},Store:{async submitScore(){submissions++}}
+  });
+  const start=html.indexOf('let pendingScoreSave =');
+  const end=html.indexOf('/* ============================================================',start);
+  vm.runInContext(html.slice(start,end)+'\nglobalThis.submit=submitCurrentScore;',runContext);
+  await Promise.all([runContext.submit(),runContext.submit()]);
+  assert.equal(submissions,1,'one submission per run even when triggered repeatedly');
+}
+
+(async()=>{await leaderboardTests();await scoreRecoveryTests();await profileAndSubmissionTests();loopTests();console.log('PASS: syntax, unique leaderboard names/pagination/cache, offline score recovery, upload serialization, profile races, duplicate submission guard, stable device ID, animation/pause timing');})().catch(e=>{console.error(e);process.exitCode=1});
