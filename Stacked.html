@@ -361,13 +361,13 @@ canvas#game{position:absolute; inset:0; width:100%; height:100%; display:block; 
 .go-num{font-family:'Baloo 2',sans-serif; font-size:24px; font-weight:700; color:var(--ink);}
 .go-label{font-size:9.5px; font-weight:700; color:#7A5A32; text-align:center; letter-spacing:0.2px;}
 
-.lb-head{display:grid; grid-template-columns:26px 1fr 64px; width:100%; font-size:10.5px; font-weight:800; color:#8A6A3C; letter-spacing:0.4px; padding:0 6px 6px; border-bottom:2px solid rgba(122,74,38,0.15);}
+.lb-head{display:grid; grid-template-columns:38px minmax(0,1fr) 90px; width:100%; font-size:10.5px; font-weight:800; color:#8A6A3C; letter-spacing:0.4px; padding:0 6px 6px; border-bottom:2px solid rgba(122,74,38,0.15);}
 .lb-list{width:100%; max-height:280px; overflow-y:auto; display:flex; flex-direction:column;}
-.lb-row{display:grid; grid-template-columns:26px 1fr 64px; align-items:center; padding:8px 6px; border-radius:10px; font-size:13px; font-weight:700; color:var(--ink);}
+.lb-row{display:grid; grid-template-columns:38px minmax(0,1fr) 90px; align-items:center; padding:8px 6px; border-radius:10px; font-size:13px; font-weight:700; color:var(--ink);}
 .lb-row:nth-child(odd){background:rgba(122,74,38,0.05);}
 .lb-row.me{background:rgba(255,201,74,0.35); box-shadow:inset 0 0 0 2px var(--gold-dark);}
 .lb-rank{font-family:'Baloo 2',sans-serif;}
-.lb-player{display:flex; align-items:center; gap:5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.lb-player{display:flex; align-items:center; gap:5px; overflow-wrap:anywhere; white-space:normal;}
 .lb-char-icon{width:16px; height:16px; border-radius:50%; object-fit:cover; flex-shrink:0; background:#eee;}
 .lb-num{text-align:right; font-variant-numeric:tabular-nums;}
 .lb-empty{text-align:center; padding:24px 0; color:#8A6A3C; font-weight:700; font-size:13px;}
@@ -959,7 +959,20 @@ const SUPABASE_KEY = (window.__ENV && window.__ENV.SUPABASE_KEY) || (window.__EN
 let supabaseClient = null;
 try {
   if (window.supabase && typeof window.supabase.createClient === 'function') {
-    supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+      global: { fetch: async (input, options = {}) => {
+        const controller = new AbortController();
+        const abort = () => controller.abort();
+        const timer = setTimeout(abort, 10000);
+        if(options.signal?.aborted) abort();
+        options.signal?.addEventListener('abort', abort, { once:true });
+        try { return await fetch(input, { ...options, signal:controller.signal }); }
+        finally {
+          clearTimeout(timer);
+          options.signal?.removeEventListener('abort', abort);
+        }
+      } }
+    });
   }
 } catch(e) {
   console.warn('Supabase initialization notice:', e);
@@ -1038,6 +1051,7 @@ const Store = {
         const res3 = await supabaseClient
           .from('leaderboard')
           .select('name, character')
+          .eq('player_id', deviceId)
           .order('id', { ascending: false })
           .limit(1)
           .maybeSingle();
@@ -1047,7 +1061,7 @@ const Store = {
       }
 
       if(data && (data.name || data.username)){
-        const remoteName = (data.name || data.username || '').toString().slice(0,14).trim();
+        const remoteName = (data.name || data.username || '').toString().trim();
         if(remoteName){
           profile.name = remoteName;
           if(data.character && ['zephy','zara'].includes(data.character)) profile.character = data.character;
@@ -1103,58 +1117,47 @@ const Store = {
     }
   },
 
+  leaderboardOnline: false,
   async getLeaderboard(){
     let raw = [];
-    let supabaseSuccess = false;
+    Store.leaderboardOnline = false;
     if(supabaseClient){
       try {
-        const { data, error } = await supabaseClient
-          .from('leaderboard')
-          .select('name, character, score, perfect, combo, jumps, created_at')
-          .order('score', { ascending: false })
-          .limit(200);
-        
-        if(!error && Array.isArray(data)){
-          supabaseSuccess = true;
-          setCloudStatus(true, 'Supabase Online');
-          raw = data;
-        } else if(error){
-          console.warn('Supabase leaderboard fetch notice:', error);
-          setCloudStatus(false, 'DB Offline / Connecting');
+        // Fetch every page: Supabase caps the number of rows per response.
+        const pageSize = 500;
+        for(let offset = 0; ; ){
+          const { data, error } = await supabaseClient.from('leaderboard')
+            .select('id, player_id, name, character, score, perfect, combo, jumps, created_at')
+            .order('id', { ascending: true }).range(offset, offset + pageSize - 1);
+          if(error) throw error;
+          if(!Array.isArray(data)) throw new Error('Invalid leaderboard response');
+          if(!data.length) break;
+          raw.push(...data);
+          offset += data.length;
         }
+        Store.leaderboardOnline = true;
+        setCloudStatus(true, 'Supabase Online');
+        try { localStorage.setItem('island_stack_lb_cache', JSON.stringify(raw)); }catch(e){}
       } catch(e){
+        raw = [];
         console.warn('Supabase leaderboard fetch error:', e);
       }
     }
-
-    if(!supabaseSuccess && !raw.length) {
+    if(!Store.leaderboardOnline){
+      setCloudStatus(false, 'Offline — cached scores');
       try {
-        const cached = localStorage.getItem('island_stack_lb_cache') || localStorage.getItem('leaderboard_v1');
-        if(cached) raw = JSON.parse(cached);
-        else if(window.storage && window.storage.get){
-          const r = await window.storage.get('leaderboard_v1', true);
-          if(r && r.value) raw = JSON.parse(r.value);
-        }
-      } catch(e){}
+        const cached = JSON.parse(localStorage.getItem('island_stack_lb_cache') || '[]');
+        if(Array.isArray(cached)) raw = cached;
+      }catch(e){}
     }
-
-    // Deduplicate: keep only highest score per normalized player name
     const seen = new Map();
     for(const entry of raw){
-      const key = (entry.name||'').trim().toLowerCase();
-      if(!key) continue;
+      // Names are not identities: distinct players may share a display name.
+      const key = entry.player_id || ('legacy:' + (entry.id ?? entry.name));
       const existing = seen.get(key);
-      if(!existing || (entry.score||0) > (existing.score||0)){
-        seen.set(key, entry);
-      }
+      if(!existing || Number(entry.score) > Number(existing.score)) seen.set(key, entry);
     }
-    const deduped = Array.from(seen.values());
-    deduped.sort((a,b) => (b.score||0) - (a.score||0));
-
-    if(raw.length > 0){
-      try { localStorage.setItem('island_stack_lb_cache', JSON.stringify(raw)); }catch(e){}
-    }
-    return deduped;
+    return Array.from(seen.values()).sort((a,b) => Number(b.score) - Number(a.score));
   },
 
   async submitScore(entry){
@@ -1165,7 +1168,7 @@ const Store = {
     if(entry.combo > entry.jumps) return null;
     if(entry.jumps > 100000) return null;
     entry.name = (entry.name||'Guest Explorer').toString().slice(0,14).trim() || 'Guest Explorer';
-    const normalizedKey = entry.name.trim().toLowerCase();
+    entry.player_id = getDeviceId();
     entry.ts = Date.now();
 
     // Always insert score into Supabase leaderboard
@@ -1186,36 +1189,40 @@ const Store = {
           setCloudStatus(true, 'Score Saved to Database!');
         } else {
           console.warn('Supabase leaderboard insert notice:', error);
+          setCloudStatus(false, 'Score saved on this device only');
         }
       } catch(e){
         console.warn('Supabase score insert exception:', e);
+        setCloudStatus(false, 'Score saved on this device only');
       }
     }
 
     // Also persist profile with updated bests to Supabase
     try {
-      await Store.saveProfile(profile);
+      Store.saveProfile(profile);
     } catch(e){}
 
     try {
       // Re-fetch list (already deduplicated)
-      let list = await Store.getLeaderboard();
+      let list = [];
+      try { list = JSON.parse(localStorage.getItem('island_stack_lb_cache') || '[]'); }catch(e){}
+      if(!Array.isArray(list)) list = [];
       // Merge: replace existing entry if higher, or add new
-      const idx = list.findIndex(e => (e.name||'').trim().toLowerCase() === normalizedKey);
+      const idx = list.findIndex(e => e.player_id === entry.player_id);
       if(idx >= 0){
         if(entry.score > (list[idx].score||0)) list[idx] = entry;
       } else {
         list.push(entry);
       }
       list.sort((a,b) => (b.score||0) - (a.score||0));
-      list = list.slice(0,100);
+
       try {
         localStorage.setItem('island_stack_lb_cache', JSON.stringify(list));
         localStorage.setItem('leaderboard_v1', JSON.stringify(list));
         if(window.storage && window.storage.set) await window.storage.set('leaderboard_v1', JSON.stringify(list), true);
       } catch(e){}
       // Update global best after submission
-      globalBestScore = list.length ? Math.max(...list.map(e => e.score||0)) : 0;
+      globalBestScore = list.length ? list.reduce((best, e) => Math.max(best, Number(e.score)||0), 0) : 0;
       return list;
     } catch(e){ return null; }
   }
@@ -1251,6 +1258,8 @@ let lastTime = 0;
 let VH = 700;
 let scale = 1;
 let running = false;
+let animationFrame = null;
+let gameOverRemaining = null;
 
 /* ============================================================
    SCORING SYSTEM
@@ -1273,9 +1282,11 @@ function bankRunScore(){
 /* Get global best score across all leaderboard entries */
 async function getGlobalBestScore(){
   try {
-    const list = await Store.getLeaderboard();
-    if(!list || !list.length) return 0;
-    return Math.max(...list.map(e => e.score || 0));
+    if(!supabaseClient) return globalBestScore;
+    const { data, error } = await supabaseClient.from('leaderboard')
+      .select('score').order('score', { ascending:false }).limit(1);
+    if(error) return globalBestScore;
+    return Number(data?.[0]?.score) || 0;
   } catch(e){ return 0; }
 }
 let globalBestScore = 0;
@@ -1291,6 +1302,8 @@ function showScreen(name){
   Object.values(screens).forEach(s=>s.classList.add('hidden'));
   if(screens[name]) screens[name].classList.remove('hidden');
   state = name;
+  if(name !== 'playing') stopLoop();
+  syncVideos();
   hud.classList.toggle('hidden', name!=='playing');
   tapHint.classList.toggle('hidden', name!=='playing' || jumpCount>0);
 }
@@ -1300,7 +1313,7 @@ function showScreen(name){
 ============================================================ */
 function resize(){
   const rect = canvas.parentElement.getBoundingClientRect();
-  const dpr = Math.min(window.devicePixelRatio||1, 2.5);
+  const dpr = Math.min(window.devicePixelRatio||1, 1.5);
   canvas.width = Math.round(rect.width*dpr);
   canvas.height = Math.round(rect.height*dpr);
   scale = (rect.width/VW)*dpr;
@@ -1312,6 +1325,7 @@ window.addEventListener('resize', ()=>{ resize(); if(!running) render(); });
    GAME SETUP
 ============================================================ */
 function resetGame(){
+  gameOverRemaining = null;
   perfectCount=0; jumpCount=0; combo=0; bestCombo=0;
   score=0; runTierScore=0;
   stackTopWorldY = 0;
@@ -1400,7 +1414,9 @@ function handleMiss(missDir){
   Audio_.fall();
   triggerShake(9, 0.3);
   tapHint.classList.add('hidden');
-  setTimeout(()=>triggerGameOver(), 620);
+  roundEnding = true;
+  character.animT = 0;
+  gameOverRemaining = 0.62;
 }
 
 function completeLanding(){
@@ -1490,7 +1506,8 @@ function completeLanding(){
 }
 
 function triggerGameOver(){
-  running=false;
+  stopLoop();
+  gameOverRemaining = null;
   roundEnding=false;
   Audio_.gameover();
   // bankRunScore is now a no-op; score has been accumulated live
@@ -1512,6 +1529,7 @@ function triggerGameOver(){
   $('new-highscore').classList.toggle('hidden', !pendingHighscore);
   if(pendingHighscore) Audio_.highscore();
   if(!profile.name && jumpCount>=1){
+    nameReturnTo = 'gameover';
     showScreen('name');
     $('name-input').value='';
     setTimeout(()=>$('name-input').focus(), 200);
@@ -1521,14 +1539,16 @@ function triggerGameOver(){
   }
 }
 
+let pendingScoreSave = Promise.resolve();
 async function submitCurrentScore(){
   if(jumpCount<1) return;
   const pName = (profile.name && profile.name.trim()) ? profile.name.trim() : 'Guest Explorer';
   profile.name = pName;
-  await Store.submitScore({
+  pendingScoreSave = Store.submitScore({
     name: pName, character: selectedChar,
     score: score, perfect: perfectCount, jumps: jumpCount, combo: bestCombo
   });
+  await pendingScoreSave;
 }
 
 /* ============================================================
@@ -1616,6 +1636,10 @@ function screenXFor(worldX){
    UPDATE
 ============================================================ */
 function update(dt){
+  if(gameOverRemaining !== null){
+    gameOverRemaining -= dt;
+    if(gameOverRemaining <= 0){ triggerGameOver(); return; }
+  }
   timeAccum += dt;
   if(camShake.t<camShake.dur) camShake.t = Math.min(camShake.dur, camShake.t+dt);
 
@@ -1636,7 +1660,7 @@ function update(dt){
       triggerShake(6, 0.22);
       startFlinch();
       tapHint.classList.add('hidden');
-      setTimeout(()=>triggerGameOver(), 520);
+      gameOverRemaining = 0.52;
     }
   }
 
@@ -2271,43 +2295,73 @@ function render(){
 /* ============================================================
    LOOP
 ============================================================ */
-function loop(ts){
-  if(!running) return;
-  if(!lastTime) lastTime=ts;
-  let dt = (ts-lastTime)/1000;
-  dt = Math.min(dt, 0.033);
-  lastTime = ts;
-  update(dt);
-  render();
-  requestAnimationFrame(loop);
+function stopLoop(){
+  running = false;
+  if(animationFrame !== null) cancelAnimationFrame(animationFrame);
+  animationFrame = null;
+  lastTime = 0;
 }
+function startLoop(){
+  stopLoop();
+  running = true;
+  animationFrame = requestAnimationFrame(loop);
+}
+function loop(ts){
+  animationFrame = null;
+  if(!running) return;
+  const dt = lastTime ? Math.min((ts-lastTime)/1000, 0.1) : 0;
+  lastTime = ts;
+  // Small simulation steps keep landing timing consistent on slower frames.
+  let remaining = dt;
+  while(remaining > 0 && running){
+    const step = Math.min(remaining, 1/120);
+    update(step);
+    remaining -= step;
+  }
+  render();
+  if(running) animationFrame = requestAnimationFrame(loop);
+}
+function syncVideos(){
+  document.querySelectorAll('video').forEach(video => {
+    const visible = !document.hidden && (video.classList.contains('game-bg-video')
+      ? state === 'playing' : !!video.closest('.screen:not(.hidden)'));
+    if(visible) video.play().catch(()=>{});
+    else video.pause();
+  });
+}
+document.addEventListener('visibilitychange', () => {
+  if(document.hidden && state === 'playing') showScreen('pause');
+  syncVideos();
+});
 
 /* ============================================================
    LEADERBOARD UI
 ============================================================ */
 async function renderLeaderboard(){
-  const list = await Store.getLeaderboard(); // already deduplicated by getLeaderboard
   const el = $('lb-list');
-  el.innerHTML='';
+  el.textContent = 'Loading scores…';
+  await pendingScoreSave;
+  const list = await Store.getLeaderboard();
+  el.innerHTML = Store.leaderboardOnline ? '' : '<div class="lb-empty">Offline — showing cached scores. Reopen to retry.</div>';
   if(!list.length){
-    el.innerHTML = '<div class="lb-empty">No scores yet. Be the first!</div>';
+    if(Store.leaderboardOnline) el.innerHTML = '<div class="lb-empty">No scores yet. Be the first!</div>';
     return;
   }
-  const myNorm = (profile.name||'').trim().toLowerCase();
-  list.slice(0,50).forEach((entry, i)=>{
-    const entryNorm = (entry.name||'').trim().toLowerCase();
+  const fragment = document.createDocumentFragment();
+  list.forEach((entry, i)=>{
     const row = document.createElement('div');
-    const isMe = myNorm && entryNorm === myNorm;
+    const isMe = entry.player_id === getDeviceId();
     row.className = 'lb-row' + (isMe ? ' me' : '');
     const charIcon = entry.character === 'zara' ? '🌺' : '🏴‍☠️';
     const rankDisplay = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i + 1);
     row.innerHTML = `<span class="lb-rank">${rankDisplay}</span>
-      <span class="lb-player" title="${escapeHtml(entry.name)}">${charIcon} ${escapeHtml(entry.name)}</span>
+      <span class="lb-player">${charIcon} ${escapeHtml(entry.name)}</span>
       <span class="lb-num">${entry.score||0}</span>`;
-    el.appendChild(row);
+    fragment.appendChild(row);
   });
+  el.appendChild(fragment);
   // Update global best from freshly loaded list
-  globalBestScore = list.length ? Math.max(...list.map(e => e.score||0)) : 0;
+  globalBestScore = list.length ? list.reduce((best, e) => Math.max(best, Number(e.score)||0), 0) : 0;
 }
 function escapeHtml(s){ const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
 
@@ -2320,7 +2374,7 @@ let nameReturnTo = 'gameover';
 function wireUI(){
   $('btn-play').addEventListener('click', ()=>{ Audio_.click(); Audio_.unlock(); showScreen('select'); });
   $('btn-how-to-play').addEventListener('click', ()=>{ Audio_.click(); showScreen('howtoplay'); });
-  $('btn-leaderboard').addEventListener('click', async ()=>{ Audio_.click(); lbReturnTo='start'; await renderLeaderboard(); showScreen('leaderboard'); });
+  $('btn-leaderboard').addEventListener('click', async ()=>{ Audio_.click(); lbReturnTo='start'; showScreen('leaderboard'); await renderLeaderboard(); });
   $('btn-how-back').addEventListener('click', ()=>{ Audio_.click(); showScreen('start'); });
   $('btn-lb-back').addEventListener('click', ()=>{ Audio_.click(); showScreen(lbReturnTo); });
 
@@ -2382,8 +2436,7 @@ function wireUI(){
     Audio_.click();
     showScreen('playing');
     hud.classList.remove('hidden');
-    running=true; lastTime=0;
-    requestAnimationFrame(loop);
+    startLoop();
   });
   $('btn-pause-restart').addEventListener('click', ()=>{ Audio_.click(); beginRun(); });
   $('btn-pause-home').addEventListener('click', ()=>{ Audio_.click(); running=false; showScreen('start'); });
@@ -2391,17 +2444,17 @@ function wireUI(){
   $('btn-retry').addEventListener('click', ()=>{ Audio_.click(); beginRun(); });
   $('btn-go-select').addEventListener('click', ()=>{ Audio_.click(); showScreen('select'); });
   $('btn-go-home').addEventListener('click', ()=>{ Audio_.click(); showScreen('start'); });
-  $('btn-go-leaderboard').addEventListener('click', async ()=>{ Audio_.click(); lbReturnTo='gameover'; await renderLeaderboard(); showScreen('leaderboard'); });
+  $('btn-go-leaderboard').addEventListener('click', async ()=>{ Audio_.click(); lbReturnTo='gameover'; showScreen('leaderboard'); await renderLeaderboard(); });
 
   $('btn-name-submit').addEventListener('click', async ()=>{
     const val = $('name-input').value.trim();
     profile.name = val.slice(0,14) || 'Guest';
-    await Store.saveProfile(profile);
+    Store.saveProfile(profile);
     updateHomePlayerBadge();
     if(nameReturnTo === 'start'){
       showScreen('start');
     } else {
-      await submitCurrentScore();
+      submitCurrentScore();
       showScreen('gameover');
     }
   });
@@ -2410,8 +2463,8 @@ function wireUI(){
       showScreen('start');
     } else {
       if(!profile.name) profile.name = 'Guest Explorer';
-      await Store.saveProfile(profile);
-      await submitCurrentScore();
+      Store.saveProfile(profile);
+      submitCurrentScore();
       showScreen('gameover');
     }
   });
@@ -2435,8 +2488,7 @@ function beginRun(){
   tapHint.classList.remove('hidden');
   // Refresh global best so HUD shows correct value from the start of the run
   refreshGlobalBest().then(()=>updateHud());
-  running=true; lastTime=0;
-  requestAnimationFrame(loop);
+  startLoop();
 }
 
 /* ============================================================
@@ -2478,6 +2530,7 @@ function imgLoaded(img){
 function startCharPreviewIdle(){
   const previewEls = { zephy: $('char-preview-zephy'), zara: $('char-preview-zara') };
   setInterval(()=>{
+    if(state !== 'select' || document.hidden) return;
     for(const key of ['zephy','zara']){
       const arr = SPRITE_SEQ[key] && SPRITE_SEQ[key].idle;
       const el = previewEls[key];
