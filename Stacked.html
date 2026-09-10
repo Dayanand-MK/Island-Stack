@@ -1365,6 +1365,12 @@ window.addEventListener('resize', ()=>{ resize(); if(!running) render(); });
    GAME SETUP
 ============================================================ */
 function resetGame(){
+  clearTimeout(bannerTimeout);
+  clearTimeout(tierBannerTimeout);
+  landingBanner.classList.remove('show');
+  landingBanner.textContent = '';
+  $('tier-banner').classList.remove('show');
+  $('tier-banner').classList.add('hidden');
   runSubmitted = false;
   gameOverRemaining = null;
   perfectCount=0; jumpCount=0; combo=0; bestCombo=0;
